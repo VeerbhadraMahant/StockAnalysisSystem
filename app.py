@@ -350,6 +350,76 @@ def predict_future_prices(model, price_series, n_days, n_lags=30):
     return future_dates, np.array(predictions)
 
 
+def calculate_rolling_metrics(price_series, windows=[20, 30]):
+    """
+    Calculate rolling metrics (mean, std, min, max) for different windows.
+    
+    Parameters:
+    -----------
+    price_series : pd.Series
+        Price data
+    windows : list
+        List of window sizes
+    
+    Returns:
+    --------
+    dict : Dictionary of rolling metrics for each window
+    """
+    metrics = {}
+    for window in windows:
+        metrics[window] = {
+            'mean': price_series.rolling(window=window).mean(),
+            'std': price_series.rolling(window=window).std(),
+            'min': price_series.rolling(window=window).min(),
+            'max': price_series.rolling(window=window).max()
+        }
+    return metrics
+
+
+def analyze_trading_signals(actual, predicted):
+    """
+    Analyze trading signal accuracy (directional prediction).
+    
+    Parameters:
+    -----------
+    actual : np.array
+        Actual prices
+    predicted : np.array
+        Predicted prices
+    
+    Returns:
+    --------
+    dict : Trading signal statistics
+    """
+    # Calculate directional changes
+    true_dir = np.sign(np.diff(actual))
+    pred_dir = np.sign(np.diff(predicted))
+    
+    # Check if directions match
+    correct = true_dir == pred_dir
+    accuracy = np.mean(correct) * 100
+    
+    # Separate up and down moves
+    ups = true_dir > 0
+    downs = true_dir < 0
+    
+    up_acc = np.mean(correct[ups]) * 100 if np.any(ups) else 0
+    down_acc = np.mean(correct[downs]) * 100 if np.any(downs) else 0
+    
+    # Rolling accuracy
+    rolling_acc = pd.Series(correct.astype(float)).rolling(window=20).mean() * 100
+    
+    return {
+        'overall_accuracy': accuracy,
+        'up_accuracy': up_acc,
+        'down_accuracy': down_acc,
+        'correct_predictions': np.sum(correct),
+        'total_predictions': len(correct),
+        'rolling_accuracy': rolling_acc,
+        'correct_flags': correct
+    }
+
+
 # ========================================
 # Visualization Functions
 # ========================================
@@ -572,6 +642,223 @@ def plot_prediction_vs_actual(dates, actual, predicted, ticker):
     return fig
 
 
+def plot_rolling_metrics(price_series, ticker, windows=[20, 30]):
+    """
+    Plot rolling metrics (mean, std) for multiple windows.
+    """
+    metrics = calculate_rolling_metrics(price_series, windows)
+    
+    fig = make_subplots(
+        rows=2, cols=1,
+        subplot_titles=('Rolling Mean', 'Rolling Standard Deviation'),
+        vertical_spacing=0.12
+    )
+    
+    # Plot price and rolling means
+    fig.add_trace(go.Scatter(
+        x=price_series.index, y=price_series.values,
+        mode='lines', name='Price',
+        line=dict(color='gray', width=1), opacity=0.5
+    ), row=1, col=1)
+    
+    colors = ['blue', 'green', 'orange']
+    for i, window in enumerate(windows):
+        fig.add_trace(go.Scatter(
+            x=metrics[window]['mean'].index,
+            y=metrics[window]['mean'].values,
+            mode='lines',
+            name=f'{window}-Day MA',
+            line=dict(color=colors[i % len(colors)], width=2)
+        ), row=1, col=1)
+    
+    # Plot rolling standard deviations
+    for i, window in enumerate(windows):
+        fig.add_trace(go.Scatter(
+            x=metrics[window]['std'].index,
+            y=metrics[window]['std'].values,
+            mode='lines',
+            name=f'{window}-Day Std',
+            line=dict(color=colors[i % len(colors)], width=2),
+            showlegend=True
+        ), row=2, col=1)
+    
+    fig.update_xaxes(title_text="Date", row=2, col=1)
+    fig.update_yaxes(title_text="Price ($)", row=1, col=1)
+    fig.update_yaxes(title_text="Std Deviation ($)", row=2, col=1)
+    
+    fig.update_layout(
+        title=f"{ticker} - Rolling Metrics Analysis",
+        height=700,
+        template='plotly_white',
+        hovermode='x unified'
+    )
+    
+    return fig
+
+
+def plot_trading_signals(actual, predicted, ticker):
+    """
+    Visualize trading signal analysis.
+    """
+    signals = analyze_trading_signals(actual, predicted)
+    
+    fig = make_subplots(
+        rows=2, cols=2,
+        subplot_titles=(
+            'Cumulative Correct Predictions',
+            '20-Day Rolling Accuracy',
+            'Directional Accuracy by Move Type',
+            'Prediction Breakdown'
+        ),
+        specs=[[{"type": "scatter"}, {"type": "scatter"}],
+               [{"type": "bar"}, {"type": "bar"}]],
+        vertical_spacing=0.15,
+        horizontal_spacing=0.12
+    )
+    
+    # Cumulative correct predictions
+    cumulative = np.cumsum(signals['correct_flags'])
+    fig.add_trace(go.Scatter(
+        y=cumulative,
+        mode='lines',
+        name='Cumulative Correct',
+        line=dict(color='green', width=2),
+        fill='tozeroy'
+    ), row=1, col=1)
+    
+    # Rolling accuracy
+    fig.add_trace(go.Scatter(
+        y=signals['rolling_accuracy'].values,
+        mode='lines',
+        name='Rolling Accuracy',
+        line=dict(color='purple', width=2)
+    ), row=1, col=2)
+    
+    fig.add_hline(y=50, line_dash="dash", line_color="red",
+                  annotation_text="Random (50%)", row=1, col=2)
+    
+    # Directional accuracy
+    fig.add_trace(go.Bar(
+        x=['Up Moves', 'Down Moves'],
+        y=[signals['up_accuracy'], signals['down_accuracy']],
+        marker_color=['green', 'red'],
+        name='Accuracy',
+        text=[f"{signals['up_accuracy']:.1f}%", f"{signals['down_accuracy']:.1f}%"],
+        textposition='outside'
+    ), row=2, col=1)
+    
+    fig.add_hline(y=50, line_dash="dash", line_color="gray", row=2, col=1)
+    
+    # Breakdown
+    correct_count = signals['correct_predictions']
+    wrong_count = signals['total_predictions'] - correct_count
+    
+    fig.add_trace(go.Bar(
+        x=['Correct', 'Wrong'],
+        y=[correct_count, wrong_count],
+        marker_color=['lightgreen', 'lightcoral'],
+        name='Count',
+        text=[str(correct_count), str(wrong_count)],
+        textposition='outside'
+    ), row=2, col=2)
+    
+    fig.update_xaxes(title_text="Sample Index", row=1, col=1)
+    fig.update_xaxes(title_text="Sample Index", row=1, col=2)
+    fig.update_yaxes(title_text="Count", row=1, col=1)
+    fig.update_yaxes(title_text="Accuracy (%)", row=1, col=2)
+    fig.update_yaxes(title_text="Accuracy (%)", row=2, col=1)
+    fig.update_yaxes(title_text="Count", row=2, col=2)
+    
+    fig.update_layout(
+        title=f"{ticker} - Trading Signal Analysis (Overall: {signals['overall_accuracy']:.1f}%)",
+        height=800,
+        template='plotly_white',
+        showlegend=False
+    )
+    
+    return fig
+
+
+def plot_residuals_analysis(actual, predicted, ticker):
+    """
+    Create residual analysis visualization.
+    """
+    residuals = actual - predicted
+    
+    fig = make_subplots(
+        rows=2, cols=2,
+        subplot_titles=(
+            'Residuals vs Predicted',
+            'Residual Distribution',
+            'Residuals Over Time',
+            'Absolute Residuals Over Time'
+        ),
+        vertical_spacing=0.12,
+        horizontal_spacing=0.12
+    )
+    
+    # Residuals vs Predicted
+    fig.add_trace(go.Scatter(
+        x=predicted,
+        y=residuals,
+        mode='markers',
+        marker=dict(size=5, color='steelblue', opacity=0.6),
+        name='Residuals'
+    ), row=1, col=1)
+    
+    fig.add_hline(y=0, line_dash="dash", line_color="red", row=1, col=1)
+    
+    # Histogram
+    fig.add_trace(go.Histogram(
+        x=residuals,
+        nbinsx=30,
+        marker_color='steelblue',
+        name='Distribution'
+    ), row=1, col=2)
+    
+    # Residuals over time
+    fig.add_trace(go.Scatter(
+        y=residuals,
+        mode='lines',
+        line=dict(color='coral', width=1),
+        fill='tozeroy',
+        name='Residuals',
+        opacity=0.7
+    ), row=2, col=1)
+    
+    fig.add_hline(y=0, line_dash="dash", line_color="red", row=2, col=1)
+    
+    # Absolute residuals
+    fig.add_trace(go.Scatter(
+        y=np.abs(residuals),
+        mode='lines',
+        line=dict(color='orange', width=1),
+        name='|Residuals|'
+    ), row=2, col=2)
+    
+    fig.update_xaxes(title_text="Predicted Price ($)", row=1, col=1)
+    fig.update_xaxes(title_text="Residual ($)", row=1, col=2)
+    fig.update_xaxes(title_text="Sample Index", row=2, col=1)
+    fig.update_xaxes(title_text="Sample Index", row=2, col=2)
+    
+    fig.update_yaxes(title_text="Residual ($)", row=1, col=1)
+    fig.update_yaxes(title_text="Frequency", row=1, col=2)
+    fig.update_yaxes(title_text="Residual ($)", row=2, col=1)
+    fig.update_yaxes(title_text="|Residual| ($)", row=2, col=2)
+    
+    mean_res = float(np.mean(residuals))
+    std_res = float(np.std(residuals))
+    
+    fig.update_layout(
+        title=f"{ticker} - Residual Analysis (Mean: ${mean_res:.2f}, Std: ${std_res:.2f})",
+        height=700,
+        template='plotly_white',
+        showlegend=False
+    )
+    
+    return fig
+
+
 # ========================================
 # Main Application
 # ========================================
@@ -759,6 +1046,28 @@ def main():
             st.metric("Mean Volatility", f"{float(volatility.mean()):.2f}%")
         with col3:
             st.metric("Max Volatility", f"{float(volatility.max()):.2f}%")
+        
+        # Rolling Metrics Analysis
+        st.markdown("---")
+        st.subheader(f"📈 Rolling Metrics Analysis - {analysis_ticker}")
+        st.info("This section shows 20-day and 30-day rolling averages and standard deviations to help identify trends and volatility patterns.")
+        
+        rolling_fig = plot_rolling_metrics(ticker_data, analysis_ticker, windows=[20, 30])
+        st.plotly_chart(rolling_fig, use_container_width=True)
+        
+        # Rolling metrics statistics
+        metrics_20 = calculate_rolling_metrics(ticker_data, windows=[20])
+        metrics_30 = calculate_rolling_metrics(ticker_data, windows=[30])
+        
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("20-Day MA (Latest)", f"${float(metrics_20[20]['mean'].iloc[-1]):.2f}")
+        with col2:
+            st.metric("20-Day Std (Latest)", f"${float(metrics_20[20]['std'].iloc[-1]):.2f}")
+        with col3:
+            st.metric("30-Day MA (Latest)", f"${float(metrics_30[30]['mean'].iloc[-1]):.2f}")
+        with col4:
+            st.metric("30-Day Std (Latest)", f"${float(metrics_30[30]['std'].iloc[-1]):.2f}")
     
     # ========================================
     # Tab 3: Correlation Analysis
@@ -947,6 +1256,83 @@ def main():
             )
             
             st.plotly_chart(residuals_fig, use_container_width=True)
+            
+            # ========================================
+            # Advanced Model Analysis
+            # ========================================
+            st.markdown("---")
+            st.subheader("🔬 Advanced Model Analysis")
+            
+            # Create tabs for advanced analysis
+            adv_tab1, adv_tab2, adv_tab3 = st.tabs([
+                "📊 Detailed Residual Analysis",
+                "🎯 Trading Signal Analysis",
+                "📈 Performance Metrics"
+            ])
+            
+            with adv_tab1:
+                st.info("Residual analysis helps identify patterns in prediction errors and validate model assumptions.")
+                residual_analysis_fig = plot_residuals_analysis(
+                    y_test.values,
+                    results['predictions_test'],
+                    pred_ticker
+                )
+                st.plotly_chart(residual_analysis_fig, use_container_width=True)
+            
+            with adv_tab2:
+                st.info("Trading signal analysis evaluates how well the model predicts price movement directions, which is crucial for trading strategies.")
+                signal_fig = plot_trading_signals(
+                    y_test.values,
+                    results['predictions_test'],
+                    pred_ticker
+                )
+                st.plotly_chart(signal_fig, use_container_width=True)
+                
+                # Display trading signal stats
+                signals = analyze_trading_signals(y_test.values, results['predictions_test'])
+                
+                st.markdown("### 📊 Signal Statistics")
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Overall Accuracy", f"{signals['overall_accuracy']:.1f}%")
+                with col2:
+                    st.metric("Up Move Accuracy", f"{signals['up_accuracy']:.1f}%")
+                with col3:
+                    st.metric("Down Move Accuracy", f"{signals['down_accuracy']:.1f}%")
+                with col4:
+                    st.metric("Correct Predictions", 
+                             f"{signals['correct_predictions']}/{signals['total_predictions']}")
+            
+            with adv_tab3:
+                st.info("Extended performance metrics provide deeper insights into model behavior.")
+                
+                # Additional metrics
+                mape = np.mean(np.abs((y_test.values - results['predictions_test']) / y_test.values)) * 100
+                
+                metrics_extended = pd.DataFrame({
+                    'Metric': [
+                        'Mean Absolute Error (MAE)',
+                        'Root Mean Squared Error (RMSE)',
+                        'R² Score',
+                        'Mean Absolute Percentage Error (MAPE)',
+                        'Max Error',
+                        'Min Error',
+                        'Mean Residual',
+                        'Std Residual'
+                    ],
+                    'Value': [
+                        f"${results['metrics']['test']['MAE']:.2f}",
+                        f"${results['metrics']['test']['RMSE']:.2f}",
+                        f"{results['metrics']['test']['R²']:.4f}",
+                        f"{mape:.2f}%",
+                        f"${float(np.max(residuals)):.2f}",
+                        f"${float(np.min(residuals)):.2f}",
+                        f"${float(np.mean(residuals)):.2f}",
+                        f"${float(np.std(residuals)):.2f}"
+                    ]
+                })
+                
+                st.dataframe(metrics_extended, use_container_width=True, hide_index=True)
             
             # ========================================
             # Future Price Prediction
