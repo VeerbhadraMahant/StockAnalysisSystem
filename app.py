@@ -216,6 +216,17 @@ def prepare_regression_data(price_series, n_lags=30):
     --------
     tuple : (X_train, X_test, y_train, y_test, dates_test)
     """
+    # Ensure we have a clean Series
+    if isinstance(price_series, pd.DataFrame):
+        price_series = price_series.iloc[:, 0]
+    
+    # Remove any NaN or infinite values from input
+    price_series = price_series.replace([np.inf, -np.inf], np.nan).dropna()
+    
+    # Check if we have enough data
+    if len(price_series) < n_lags + 100:  # Need at least n_lags + reasonable train/test split
+        raise ValueError(f"Insufficient data for regression. Need at least {n_lags + 100} data points, got {len(price_series)}")
+    
     # Create lagged features
     feature_df = pd.DataFrame(index=price_series.index)
     
@@ -226,11 +237,15 @@ def prepare_regression_data(price_series, n_lags=30):
     feature_df['target'] = price_series.shift(-1)
     
     # Drop NaN values
-    feature_df.dropna(inplace=True)
+    feature_df = feature_df.dropna()
+    
+    # Double-check for any remaining NaN or infinite values
+    if feature_df.isnull().any().any() or np.isinf(feature_df.values).any():
+        feature_df = feature_df.replace([np.inf, -np.inf], np.nan).dropna()
     
     # Split features and target
-    X = feature_df.drop('target', axis=1)
-    y = feature_df['target']
+    X = feature_df.drop('target', axis=1).values  # Convert to numpy array
+    y = feature_df['target'].values  # Convert to numpy array
     
     # Train-test split (80-20)
     split_idx = int(len(X) * 0.8)
@@ -238,7 +253,7 @@ def prepare_regression_data(price_series, n_lags=30):
     X_test = X[split_idx:]
     y_train = y[:split_idx]
     y_test = y[split_idx:]
-    dates_test = X_test.index
+    dates_test = feature_df.index[split_idx:]
     
     return X_train, X_test, y_train, y_test, dates_test
 
@@ -837,9 +852,17 @@ def main():
             st.info(f"🤖 Training model to predict next day's closing price for **{pred_ticker}** using 30-day lagged features...")
             
             # Prepare data and train model
-            with st.spinner("Training model..."):
-                X_train, X_test, y_train, y_test, dates_test = prepare_regression_data(pred_data, n_lags=30)
-                results = train_and_evaluate_model(X_train, X_test, y_train, y_test)
+            try:
+                with st.spinner("Training model..."):
+                    X_train, X_test, y_train, y_test, dates_test = prepare_regression_data(pred_data, n_lags=30)
+                    results = train_and_evaluate_model(X_train, X_test, y_train, y_test)
+            except ValueError as e:
+                st.error(f"❌ Error preparing data: {str(e)}")
+                st.warning("💡 Try selecting a longer date range to get more data for model training.")
+                st.stop()
+            except Exception as e:
+                st.error(f"❌ Error training model: {str(e)}")
+                st.stop()
             
             # Display metrics
             st.subheader("📊 Model Performance Metrics")
