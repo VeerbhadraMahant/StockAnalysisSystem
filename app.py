@@ -1221,7 +1221,7 @@ def main():
             st.subheader("Actual vs Predicted Prices (Test Set)")
             pred_fig = plot_prediction_vs_actual(
                 dates_test,
-                y_test.values,
+                y_test,
                 results['predictions_test'],
                 pred_ticker
             )
@@ -1229,7 +1229,7 @@ def main():
             
             # Residuals analysis
             st.subheader("Prediction Errors (Residuals)")
-            residuals = y_test.values - results['predictions_test']
+            residuals = y_test - results['predictions_test']
             
             residuals_fig = go.Figure()
             residuals_fig.add_trace(go.Scatter(
@@ -1273,7 +1273,7 @@ def main():
             with adv_tab1:
                 st.info("Residual analysis helps identify patterns in prediction errors and validate model assumptions.")
                 residual_analysis_fig = plot_residuals_analysis(
-                    y_test.values,
+                    y_test,
                     results['predictions_test'],
                     pred_ticker
                 )
@@ -1282,14 +1282,14 @@ def main():
             with adv_tab2:
                 st.info("Trading signal analysis evaluates how well the model predicts price movement directions, which is crucial for trading strategies.")
                 signal_fig = plot_trading_signals(
-                    y_test.values,
+                    y_test,
                     results['predictions_test'],
                     pred_ticker
                 )
                 st.plotly_chart(signal_fig, use_container_width=True)
                 
                 # Display trading signal stats
-                signals = analyze_trading_signals(y_test.values, results['predictions_test'])
+                signals = analyze_trading_signals(y_test, results['predictions_test'])
                 
                 st.markdown("### 📊 Signal Statistics")
                 col1, col2, col3, col4 = st.columns(4)
@@ -1307,7 +1307,7 @@ def main():
                 st.info("Extended performance metrics provide deeper insights into model behavior.")
                 
                 # Additional metrics
-                mape = np.mean(np.abs((y_test.values - results['predictions_test']) / y_test.values)) * 100
+                mape = np.mean(np.abs((y_test - results['predictions_test']) / y_test)) * 100
                 
                 metrics_extended = pd.DataFrame({
                     'Metric': [
