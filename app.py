@@ -288,6 +288,53 @@ def train_and_evaluate_model(X_train, X_test, y_train, y_test):
     }
 
 
+def predict_future_prices(model, price_series, n_days, n_lags=30):
+    """
+    Predict future stock prices for the next n_days.
+    
+    Parameters:
+    -----------
+    model : sklearn model
+        Trained regression model
+    price_series : pd.Series or pd.DataFrame
+        Historical price data
+    n_days : int
+        Number of days to predict into the future
+    n_lags : int
+        Number of lagged features used in the model
+    
+    Returns:
+    --------
+    tuple : (future_dates, predictions)
+    """
+    # Ensure we're working with a Series (flatten if DataFrame)
+    if isinstance(price_series, pd.DataFrame):
+        price_series = price_series.iloc[:, 0]
+    
+    # Get the last n_lags prices as a flat list
+    last_prices = price_series.values[-n_lags:].flatten().tolist()
+    
+    # Generate future dates (excluding weekends for business days)
+    last_date = price_series.index[-1]
+    future_dates = pd.bdate_range(start=last_date + timedelta(days=1), periods=n_days)
+    
+    predictions = []
+    
+    # Iteratively predict future prices
+    for _ in range(n_days):
+        # Create feature vector from last n_lags prices
+        features = np.array(last_prices[-n_lags:]).reshape(1, -1)
+        
+        # Predict next price
+        next_price = model.predict(features)[0]
+        predictions.append(next_price)
+        
+        # Update the list of prices with the new prediction
+        last_prices.append(next_price)
+    
+    return future_dates, np.array(predictions)
+
+
 # ========================================
 # Visualization Functions
 # ========================================
@@ -594,9 +641,14 @@ def main():
         st.metric("Date Range", f"{(end_date - start_date).days} days")
     with col4:
         if len(selected_tickers) == 1:
-            latest_price = adj_close.iloc[-1]
+            # For single ticker, get the scalar value
+            if isinstance(adj_close.iloc[-1], pd.Series):
+                latest_price = float(adj_close.iloc[-1].values[0])
+            else:
+                latest_price = float(adj_close.iloc[-1])
         else:
-            latest_price = adj_close.iloc[-1].mean()
+            # For multiple tickers, calculate mean
+            latest_price = float(adj_close.iloc[-1].mean())
         st.metric("Avg Latest Price", f"${latest_price:.2f}")
     
     st.markdown("---")
@@ -624,15 +676,21 @@ def main():
         st.subheader("📊 Summary Statistics")
         
         if len(selected_tickers) == 1:
+            # Convert to ensure we're working with a Series
+            if isinstance(adj_close, pd.DataFrame):
+                price_series = adj_close.iloc[:, 0]
+            else:
+                price_series = adj_close
+            
             stats_df = pd.DataFrame({
                 'Metric': ['Mean', 'Median', 'Std Dev', 'Min', 'Max', 'Range'],
                 'Value': [
-                    f"${adj_close.mean():.2f}",
-                    f"${adj_close.median():.2f}",
-                    f"${adj_close.std():.2f}",
-                    f"${adj_close.min():.2f}",
-                    f"${adj_close.max():.2f}",
-                    f"${adj_close.max() - adj_close.min():.2f}"
+                    f"${float(price_series.mean()):.2f}",
+                    f"${float(price_series.median()):.2f}",
+                    f"${float(price_series.std()):.2f}",
+                    f"${float(price_series.min()):.2f}",
+                    f"${float(price_series.max()):.2f}",
+                    f"${float(price_series.max() - price_series.min()):.2f}"
                 ]
             })
         else:
@@ -640,11 +698,11 @@ def main():
             for ticker in selected_tickers:
                 stats_data.append({
                     'Ticker': ticker,
-                    'Mean': f"${adj_close[ticker].mean():.2f}",
-                    'Median': f"${adj_close[ticker].median():.2f}",
-                    'Std Dev': f"${adj_close[ticker].std():.2f}",
-                    'Min': f"${adj_close[ticker].min():.2f}",
-                    'Max': f"${adj_close[ticker].max():.2f}"
+                    'Mean': f"${float(adj_close[ticker].mean()):.2f}",
+                    'Median': f"${float(adj_close[ticker].median()):.2f}",
+                    'Std Dev': f"${float(adj_close[ticker].std()):.2f}",
+                    'Min': f"${float(adj_close[ticker].min()):.2f}",
+                    'Max': f"${float(adj_close[ticker].max()):.2f}"
                 })
             stats_df = pd.DataFrame(stats_data)
         
@@ -681,11 +739,11 @@ def main():
         
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("20-Day Volatility", f"{volatility.iloc[-1]:.2f}%")
+            st.metric("20-Day Volatility", f"{float(volatility.iloc[-1]):.2f}%")
         with col2:
-            st.metric("Mean Volatility", f"{volatility.mean():.2f}%")
+            st.metric("Mean Volatility", f"{float(volatility.mean()):.2f}%")
         with col3:
-            st.metric("Max Volatility", f"{volatility.max():.2f}%")
+            st.metric("Max Volatility", f"{float(volatility.max()):.2f}%")
     
     # ========================================
     # Tab 3: Correlation Analysis
@@ -749,11 +807,11 @@ def main():
             
             returns_stats.append({
                 'Ticker': ticker,
-                'Mean Daily Return (%)': f"{ticker_returns.mean():.3f}",
-                'Std Daily Return (%)': f"{ticker_returns.std():.3f}",
-                'Cumulative Return (%)': f"{cum_return:.2f}",
-                'Best Day (%)': f"{ticker_returns.max():.2f}",
-                'Worst Day (%)': f"{ticker_returns.min():.2f}"
+                'Mean Daily Return (%)': f"{float(ticker_returns.mean()):.3f}",
+                'Std Daily Return (%)': f"{float(ticker_returns.std()):.3f}",
+                'Cumulative Return (%)': f"{float(cum_return):.2f}",
+                'Best Day (%)': f"{float(ticker_returns.max()):.2f}",
+                'Worst Day (%)': f"{float(ticker_returns.min()):.2f}"
             })
         
         returns_stats_df = pd.DataFrame(returns_stats)
@@ -866,6 +924,150 @@ def main():
             )
             
             st.plotly_chart(residuals_fig, use_container_width=True)
+            
+            # ========================================
+            # Future Price Prediction
+            # ========================================
+            st.markdown("---")
+            st.subheader("🔮 Future Price Prediction")
+            st.info("⚠️ **Disclaimer:** Future predictions are based on historical patterns and should not be used as the sole basis for investment decisions. Stock markets are influenced by many unpredictable factors.")
+            
+            # User input for prediction range
+            col1, col2 = st.columns([1, 3])
+            
+            with col1:
+                n_days = st.slider(
+                    "Days to predict:",
+                    min_value=1,
+                    max_value=30,
+                    value=7,
+                    help="Select number of business days to predict into the future"
+                )
+            
+            with col2:
+                if st.button("🚀 Generate Future Predictions", type="primary"):
+                    with st.spinner("Generating predictions..."):
+                        # Get future predictions
+                        future_dates, future_predictions = predict_future_prices(
+                            results['model'],
+                            pred_data,
+                            n_days,
+                            n_lags=30
+                        )
+                        
+                        # Create visualization
+                        st.subheader(f"📈 {pred_ticker} - {n_days} Day Price Forecast")
+                        
+                        # Combine historical and future data for plotting
+                        historical_dates = pred_data.index[-60:]  # Last 60 days
+                        historical_prices = pred_data.values[-60:]
+                        
+                        future_fig = go.Figure()
+                        
+                        # Historical prices
+                        future_fig.add_trace(go.Scatter(
+                            x=historical_dates,
+                            y=historical_prices,
+                            mode='lines',
+                            name='Historical',
+                            line=dict(color='blue', width=2)
+                        ))
+                        
+                        # Predicted future prices
+                        future_fig.add_trace(go.Scatter(
+                            x=future_dates,
+                            y=future_predictions,
+                            mode='lines+markers',
+                            name='Predicted',
+                            line=dict(color='red', width=2, dash='dash'),
+                            marker=dict(size=6)
+                        ))
+                        
+                        # Add connecting line between last historical and first prediction
+                        future_fig.add_trace(go.Scatter(
+                            x=[historical_dates[-1], future_dates[0]],
+                            y=[historical_prices[-1], future_predictions[0]],
+                            mode='lines',
+                            line=dict(color='gray', width=1, dash='dot'),
+                            showlegend=False,
+                            hoverinfo='skip'
+                        ))
+                        
+                        future_fig.update_layout(
+                            title=f"{pred_ticker} - Price Forecast for Next {n_days} Business Days",
+                            xaxis_title="Date",
+                            yaxis_title="Price ($)",
+                            hovermode='x unified',
+                            height=500,
+                            template='plotly_white'
+                        )
+                        
+                        st.plotly_chart(future_fig, use_container_width=True)
+                        
+                        # Display prediction table
+                        st.subheader("📊 Detailed Predictions")
+                        
+                        predictions_df = pd.DataFrame({
+                            'Date': future_dates.strftime('%Y-%m-%d'),
+                            'Predicted Price': [f"${price:.2f}" for price in future_predictions],
+                            'Change from Previous': [''] + [f"{((future_predictions[i] - future_predictions[i-1]) / future_predictions[i-1] * 100):+.2f}%" 
+                                                             for i in range(1, len(future_predictions))]
+                        })
+                        
+                        # Add change from last known price for first prediction
+                        # Ensure last_price is a scalar value
+                        if isinstance(pred_data, pd.DataFrame):
+                            last_price = float(pred_data.iloc[-1, 0])
+                        else:
+                            last_price = float(pred_data.values[-1])
+                        
+                        predictions_df.loc[0, 'Change from Previous'] = f"{((future_predictions[0] - last_price) / last_price * 100):+.2f}%"
+                        
+                        st.dataframe(predictions_df, use_container_width=True, hide_index=True)
+                        
+                        # Summary statistics
+                        col1, col2, col3, col4 = st.columns(4)
+                        
+                        with col1:
+                            st.metric(
+                                "Starting Price",
+                                f"${last_price:.2f}",
+                                help="Last known historical price"
+                            )
+                        
+                        with col2:
+                            st.metric(
+                                "Predicted End Price",
+                                f"${future_predictions[-1]:.2f}",
+                                f"{((future_predictions[-1] - last_price) / last_price * 100):+.2f}%"
+                            )
+                        
+                        with col3:
+                            predicted_high = future_predictions.max()
+                            st.metric(
+                                "Predicted High",
+                                f"${predicted_high:.2f}",
+                                f"{((predicted_high - last_price) / last_price * 100):+.2f}%"
+                            )
+                        
+                        with col4:
+                            predicted_low = future_predictions.min()
+                            st.metric(
+                                "Predicted Low",
+                                f"${predicted_low:.2f}",
+                                f"{((predicted_low - last_price) / last_price * 100):+.2f}%"
+                            )
+                        
+                        # Trend analysis
+                        overall_trend = "📈 Upward" if future_predictions[-1] > last_price else "📉 Downward"
+                        volatility = np.std(np.diff(future_predictions) / future_predictions[:-1]) * 100
+                        
+                        st.markdown(f"""
+                        **Prediction Summary:**
+                        - **Overall Trend:** {overall_trend}
+                        - **Predicted Volatility:** {volatility:.2f}%
+                        - **Price Range:** ${predicted_low:.2f} - ${predicted_high:.2f}
+                        """)
     
     # ========================================
     # Download Section
@@ -888,10 +1090,12 @@ def main():
     
     with col2:
         # Download returns data
-        if len(selected_tickers) == 1:
-            returns_data = calculate_daily_returns(adj_close).to_frame(name='Daily_Returns_%')
+        returns_data = calculate_daily_returns(adj_close)
+        
+        # Handle Series vs DataFrame
+        if isinstance(returns_data, pd.Series):
+            returns_data = returns_data.to_frame(name='Daily_Returns_%')
         else:
-            returns_data = adj_close.pct_change() * 100
             returns_data.columns = [f"{col}_Returns_%" for col in returns_data.columns]
         
         returns_csv = returns_data.to_csv()
