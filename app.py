@@ -31,6 +31,9 @@ import plotly.express as px
 from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
 from sklearn.linear_model import LinearRegression
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.svm import SVR
+from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import warnings
@@ -303,7 +306,120 @@ def train_and_evaluate_model(X_train, X_test, y_train, y_test):
     }
 
 
-def predict_future_prices(model, price_series, n_days, n_lags=30):
+def train_and_evaluate_multiple_models(X_train, X_test, y_train, y_test):
+    """
+    Train and evaluate multiple regression models (Linear, RandomForest, SVR).
+    
+    Parameters:
+    -----------
+    X_train, X_test, y_train, y_test : arrays
+        Training and testing data
+    
+    Returns:
+    --------
+    dict : Dictionary containing results for all models
+    """
+    results = {}
+    
+    # 1. Linear Regression
+    lr_model = LinearRegression()
+    lr_model.fit(X_train, y_train)
+    lr_pred_train = lr_model.predict(X_train)
+    lr_pred_test = lr_model.predict(X_test)
+    
+    results['Linear Regression'] = {
+        'model': lr_model,
+        'predictions_train': lr_pred_train,
+        'predictions_test': lr_pred_test,
+        'metrics': {
+            'train': {
+                'MAE': mean_absolute_error(y_train, lr_pred_train),
+                'MSE': mean_squared_error(y_train, lr_pred_train),
+                'RMSE': np.sqrt(mean_squared_error(y_train, lr_pred_train)),
+                'R²': r2_score(y_train, lr_pred_train)
+            },
+            'test': {
+                'MAE': mean_absolute_error(y_test, lr_pred_test),
+                'MSE': mean_squared_error(y_test, lr_pred_test),
+                'RMSE': np.sqrt(mean_squared_error(y_test, lr_pred_test)),
+                'R²': r2_score(y_test, lr_pred_test)
+            }
+        }
+    }
+    
+    # 2. Random Forest Regression
+    rf_model = RandomForestRegressor(
+        n_estimators=100,
+        max_depth=10,
+        min_samples_split=5,
+        min_samples_leaf=2,
+        random_state=42,
+        n_jobs=-1
+    )
+    rf_model.fit(X_train, y_train)
+    rf_pred_train = rf_model.predict(X_train)
+    rf_pred_test = rf_model.predict(X_test)
+    
+    results['Random Forest'] = {
+        'model': rf_model,
+        'predictions_train': rf_pred_train,
+        'predictions_test': rf_pred_test,
+        'metrics': {
+            'train': {
+                'MAE': mean_absolute_error(y_train, rf_pred_train),
+                'MSE': mean_squared_error(y_train, rf_pred_train),
+                'RMSE': np.sqrt(mean_squared_error(y_train, rf_pred_train)),
+                'R²': r2_score(y_train, rf_pred_train)
+            },
+            'test': {
+                'MAE': mean_absolute_error(y_test, rf_pred_test),
+                'MSE': mean_squared_error(y_test, rf_pred_test),
+                'RMSE': np.sqrt(mean_squared_error(y_test, rf_pred_test)),
+                'R²': r2_score(y_test, rf_pred_test)
+            }
+        }
+    }
+    
+    # 3. Support Vector Regression (SVR) - with scaling
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    X_test_scaled = scaler.transform(X_test)
+    
+    svr_model = SVR(
+        kernel='rbf',
+        C=100,
+        gamma='scale',
+        epsilon=0.1
+    )
+    svr_model.fit(X_train_scaled, y_train)
+    svr_pred_train = svr_model.predict(X_train_scaled)
+    svr_pred_test = svr_model.predict(X_test_scaled)
+    
+    results['SVR'] = {
+        'model': svr_model,
+        'scaler': scaler,
+        'predictions_train': svr_pred_train,
+        'predictions_test': svr_pred_test,
+        'metrics': {
+            'train': {
+                'MAE': mean_absolute_error(y_train, svr_pred_train),
+                'MSE': mean_squared_error(y_train, svr_pred_train),
+                'RMSE': np.sqrt(mean_squared_error(y_train, svr_pred_train)),
+                'R²': r2_score(y_train, svr_pred_train)
+            },
+            'test': {
+                'MAE': mean_absolute_error(y_test, svr_pred_test),
+                'MSE': mean_squared_error(y_test, svr_pred_test),
+                'RMSE': np.sqrt(mean_squared_error(y_test, svr_pred_test)),
+                'R²': r2_score(y_test, svr_pred_test)
+            }
+        }
+    }
+    
+    return results
+
+
+def predict_future_prices(model, price_series, n_days, n_lags=30, scaler=None):
     """
     Predict future stock prices for the next n_days.
     
@@ -317,6 +433,8 @@ def predict_future_prices(model, price_series, n_days, n_lags=30):
         Number of days to predict into the future
     n_lags : int
         Number of lagged features used in the model
+    scaler : StandardScaler or None
+        Scaler for SVR model (optional)
     
     Returns:
     --------
@@ -339,6 +457,10 @@ def predict_future_prices(model, price_series, n_days, n_lags=30):
     for _ in range(n_days):
         # Create feature vector from last n_lags prices
         features = np.array(last_prices[-n_lags:]).reshape(1, -1)
+        
+        # Apply scaling if needed (for SVR)
+        if scaler is not None:
+            features = scaler.transform(features)
         
         # Predict next price
         next_price = model.predict(features)[0]
@@ -1340,7 +1462,7 @@ def main():
     # Tab 5: Predictive Model
     # ========================================
     with tab5:
-        st.header("Predictive Model (Linear Regression)")
+        st.header("Predictive Models Comparison")
         
         if not show_regression:
             st.info("ℹ️ Enable 'Show Regression Analysis' in the sidebar to view this section.")
@@ -1353,23 +1475,57 @@ def main():
                 pred_ticker = selected_tickers[0]
                 pred_data = adj_close
             
-            st.info(f"🤖 Training model to predict next day's closing price for **{pred_ticker}** using 30-day lagged features...")
+            st.info(f"🤖 Training multiple models to predict next day's closing price for **{pred_ticker}** using 30-day lagged features...")
+            st.markdown("**Models:** Linear Regression, Random Forest Regression, Support Vector Regression (SVR)")
             
-            # Prepare data and train model
+            # Prepare data and train models
             try:
-                with st.spinner("Training model..."):
+                with st.spinner("Training models... This may take a moment."):
                     X_train, X_test, y_train, y_test, dates_test = prepare_regression_data(pred_data, n_lags=30)
-                    results = train_and_evaluate_model(X_train, X_test, y_train, y_test)
+                    all_results = train_and_evaluate_multiple_models(X_train, X_test, y_train, y_test)
             except ValueError as e:
                 st.error(f"❌ Error preparing data: {str(e)}")
                 st.warning("💡 Try selecting a longer date range to get more data for model training.")
                 st.stop()
             except Exception as e:
-                st.error(f"❌ Error training model: {str(e)}")
+                st.error(f"❌ Error training models: {str(e)}")
                 st.stop()
             
-            # Display metrics
-            st.subheader("📊 Model Performance Metrics")
+            # Model Selection
+            st.markdown("---")
+            st.subheader("🎯 Select Model for Analysis")
+            selected_model = st.selectbox(
+                "Choose a model to analyze:",
+                options=['Linear Regression', 'Random Forest', 'SVR'],
+                help="Select a model to view detailed analysis and predictions"
+            )
+            
+            results = all_results[selected_model]
+            
+            # Display metrics comparison for all models
+            st.subheader("📊 Model Performance Comparison")
+            
+            # Create comparison dataframe
+            comparison_data = []
+            for model_name, model_results in all_results.items():
+                comparison_data.append({
+                    'Model': model_name,
+                    'Test MAE': f"${model_results['metrics']['test']['MAE']:.2f}",
+                    'Test RMSE': f"${model_results['metrics']['test']['RMSE']:.2f}",
+                    'Test R²': f"{model_results['metrics']['test']['R²']:.4f}",
+                    'Train R²': f"{model_results['metrics']['train']['R²']:.4f}"
+                })
+            
+            comparison_df = pd.DataFrame(comparison_data)
+            st.dataframe(comparison_df, use_container_width=True, hide_index=True)
+            
+            # Highlight best model
+            best_model = max(all_results.items(), key=lambda x: x[1]['metrics']['test']['R²'])
+            st.success(f"🏆 **Best Model (by Test R²):** {best_model[0]} with R² = {best_model[1]['metrics']['test']['R²']:.4f}")
+            
+            # Display detailed metrics for selected model
+            st.markdown("---")
+            st.subheader(f"📈 Detailed Metrics - {selected_model}")
             
             col1, col2 = st.columns(2)
             
@@ -1413,17 +1569,17 @@ def main():
             st.info(interpretation)
             
             # Prediction visualization
-            st.subheader("Actual vs Predicted Prices (Test Set)")
+            st.subheader(f"Actual vs Predicted Prices (Test Set) - {selected_model}")
             pred_fig = plot_prediction_vs_actual(
                 dates_test,
                 y_test,
                 results['predictions_test'],
-                pred_ticker
+                f"{pred_ticker} ({selected_model})"
             )
             st.plotly_chart(pred_fig, use_container_width=True)
             
             # Residuals analysis
-            st.subheader("Prediction Errors (Residuals)")
+            st.subheader(f"Prediction Errors (Residuals) - {selected_model}")
             residuals = y_test - results['predictions_test']
             
             residuals_fig = go.Figure()
@@ -1551,16 +1707,20 @@ def main():
             with col2:
                 if st.button("🚀 Generate Future Predictions", type="primary"):
                     with st.spinner("Generating predictions..."):
+                        # Get scaler if SVR model
+                        scaler = results.get('scaler', None)
+                        
                         # Get future predictions
                         future_dates, future_predictions = predict_future_prices(
                             results['model'],
                             pred_data,
                             n_days,
-                            n_lags=30
+                            n_lags=30,
+                            scaler=scaler
                         )
                         
                         # Create visualization
-                        st.subheader(f"📈 {pred_ticker} - {n_days} Day Price Forecast")
+                        st.subheader(f"📈 {pred_ticker} ({selected_model}) - {n_days} Day Price Forecast")
                         
                         # Combine historical and future data for plotting
                         historical_dates = pred_data.index[-60:]  # Last 60 days
