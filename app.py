@@ -420,6 +420,65 @@ def analyze_trading_signals(actual, predicted):
     }
 
 
+def detect_outliers(price_series, method='iqr'):
+    """
+    Detect outliers in price data using IQR or Z-score method.
+    
+    Parameters:
+    -----------
+    price_series : pd.Series
+        Price data
+    method : str
+        'iqr' for Interquartile Range or 'zscore' for Z-score method
+    
+    Returns:
+    --------
+    dict : Outlier information including indices, values, and statistics
+    """
+    if method == 'iqr':
+        # IQR method
+        Q1 = price_series.quantile(0.25)
+        Q3 = price_series.quantile(0.75)
+        IQR = Q3 - Q1
+        lower_bound = Q1 - 1.5 * IQR
+        upper_bound = Q3 + 1.5 * IQR
+        
+        outlier_mask = (price_series < lower_bound) | (price_series > upper_bound)
+        
+        return {
+            'outlier_mask': outlier_mask,
+            'outlier_values': price_series[outlier_mask],
+            'outlier_count': outlier_mask.sum(),
+            'outlier_percentage': (outlier_mask.sum() / len(price_series)) * 100,
+            'Q1': Q1,
+            'Q3': Q3,
+            'IQR': IQR,
+            'lower_bound': lower_bound,
+            'upper_bound': upper_bound,
+            'method': 'IQR'
+        }
+    elif method == 'zscore':
+        # Z-score method (|z| > 3)
+        mean = price_series.mean()
+        std = price_series.std()
+        z_scores = np.abs((price_series - mean) / std)
+        
+        outlier_mask = z_scores > 3
+        
+        return {
+            'outlier_mask': outlier_mask,
+            'outlier_values': price_series[outlier_mask],
+            'outlier_count': outlier_mask.sum(),
+            'outlier_percentage': (outlier_mask.sum() / len(price_series)) * 100,
+            'mean': mean,
+            'std': std,
+            'z_threshold': 3,
+            'method': 'Z-score'
+        }
+    else:
+        raise ValueError("Method must be 'iqr' or 'zscore'")
+
+
 # ========================================
 # Visualization Functions
 # ========================================
@@ -859,6 +918,80 @@ def plot_residuals_analysis(actual, predicted, ticker):
     return fig
 
 
+def plot_outlier_analysis(price_series, ticker, method='iqr'):
+    """
+    Visualize outlier detection using box plots and scatter plots.
+    
+    Parameters:
+    -----------
+    price_series : pd.Series
+        Price data
+    ticker : str
+        Stock ticker symbol
+    method : str
+        'iqr' or 'zscore'
+    
+    Returns:
+    --------
+    fig : plotly figure
+    """
+    outlier_info = detect_outliers(price_series, method=method)
+    
+    fig = make_subplots(
+        rows=1, cols=2,
+        subplot_titles=(
+            f'Box Plot - {method.upper()} Method',
+            'Price Over Time with Outliers Highlighted'
+        ),
+        horizontal_spacing=0.12
+    )
+    
+    # Box plot
+    fig.add_trace(go.Box(
+        y=price_series,
+        name='Price',
+        marker_color='lightblue',
+        boxmean='sd'
+    ), row=1, col=1)
+    
+    # Scatter plot with outliers highlighted
+    fig.add_trace(go.Scatter(
+        x=price_series.index,
+        y=price_series,
+        mode='markers',
+        name='Normal',
+        marker=dict(size=5, color='steelblue', opacity=0.6)
+    ), row=1, col=2)
+    
+    # Highlight outliers
+    if outlier_info['outlier_count'] > 0:
+        outlier_dates = outlier_info['outlier_values'].index
+        outlier_values = outlier_info['outlier_values'].values
+        
+        fig.add_trace(go.Scatter(
+            x=outlier_dates,
+            y=outlier_values,
+            mode='markers',
+            name='Outliers',
+            marker=dict(size=10, color='red', symbol='x', line=dict(width=2))
+        ), row=1, col=2)
+    
+    fig.update_xaxes(title_text="", row=1, col=1)
+    fig.update_xaxes(title_text="Date", row=1, col=2)
+    fig.update_yaxes(title_text="Price ($)", row=1, col=1)
+    fig.update_yaxes(title_text="Price ($)", row=1, col=2)
+    
+    method_label = outlier_info['method']
+    fig.update_layout(
+        title=f"{ticker} - Outlier Detection ({method_label} Method): {outlier_info['outlier_count']} outliers ({outlier_info['outlier_percentage']:.2f}%)",
+        height=500,
+        template='plotly_white',
+        hovermode='x unified'
+    )
+    
+    return fig
+
+
 # ========================================
 # Main Application
 # ========================================
@@ -1068,6 +1201,68 @@ def main():
             st.metric("30-Day MA (Latest)", f"${float(metrics_30[30]['mean'].iloc[-1]):.2f}")
         with col4:
             st.metric("30-Day Std (Latest)", f"${float(metrics_30[30]['std'].iloc[-1]):.2f}")
+        
+        # Outlier Analysis
+        st.markdown("---")
+        st.subheader(f"🔍 Outlier Analysis - {analysis_ticker}")
+        st.info("Outliers are data points that significantly differ from other observations. This analysis helps identify unusual price movements.")
+        
+        # Method selection
+        outlier_method = st.radio(
+            "Select outlier detection method:",
+            options=['iqr', 'zscore'],
+            format_func=lambda x: 'IQR (Interquartile Range)' if x == 'iqr' else 'Z-score (Standard Deviations)',
+            horizontal=True
+        )
+        
+        # Detect outliers
+        outlier_info = detect_outliers(ticker_data, method=outlier_method)
+        
+        # Display outlier statistics
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Data Points", len(ticker_data))
+        with col2:
+            st.metric("Outliers Detected", outlier_info['outlier_count'])
+        with col3:
+            st.metric("Outlier Percentage", f"{outlier_info['outlier_percentage']:.2f}%")
+        
+        # Method-specific statistics
+        if outlier_method == 'iqr':
+            st.write("**IQR Method Statistics:**")
+            iqr_col1, iqr_col2, iqr_col3, iqr_col4 = st.columns(4)
+            with iqr_col1:
+                st.metric("Q1 (25th percentile)", f"${float(outlier_info['Q1']):.2f}")
+            with iqr_col2:
+                st.metric("Q3 (75th percentile)", f"${float(outlier_info['Q3']):.2f}")
+            with iqr_col3:
+                st.metric("IQR (Q3 - Q1)", f"${float(outlier_info['IQR']):.2f}")
+            with iqr_col4:
+                st.metric("Bounds", f"${float(outlier_info['lower_bound']):.2f} - ${float(outlier_info['upper_bound']):.2f}")
+        else:
+            st.write("**Z-score Method Statistics:**")
+            z_col1, z_col2, z_col3 = st.columns(3)
+            with z_col1:
+                st.metric("Mean Price", f"${float(outlier_info['mean']):.2f}")
+            with z_col2:
+                st.metric("Std Deviation", f"${float(outlier_info['std']):.2f}")
+            with z_col3:
+                st.metric("Z-score Threshold", f"±{outlier_info['z_threshold']}")
+        
+        # Outlier visualization
+        outlier_fig = plot_outlier_analysis(ticker_data, analysis_ticker, method=outlier_method)
+        st.plotly_chart(outlier_fig, use_container_width=True)
+        
+        # Show outlier details if any exist
+        if outlier_info['outlier_count'] > 0:
+            with st.expander("📋 View Outlier Details"):
+                outlier_df = pd.DataFrame({
+                    'Date': outlier_info['outlier_values'].index.strftime('%Y-%m-%d'),
+                    'Price': [f"${val:.2f}" for val in outlier_info['outlier_values'].values]
+                })
+                st.dataframe(outlier_df, use_container_width=True)
+        else:
+            st.success("✅ No outliers detected in the price data using the selected method.")
     
     # ========================================
     # Tab 3: Correlation Analysis
